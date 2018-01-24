@@ -5,6 +5,24 @@
 
 (ma/set-current-implementation :vectorz)
 
+(deftest floats-test
+  (testing "Floats"
+    (is (= (float= 1.0 1.0) true))
+    (is (= (float= 1 1.0) true))
+    (is (= (float= 1.0 2.0) false))
+    (is (= (float< 1.0 1.0) false))
+    (is (= (float< 3.0 2.0) false))
+    (is (= (float< 1.0 2.0) true))
+    (is (= (float<= 1.0 2.0) true))
+    (is (= (float<= 1.0 1.0) true))
+    (is (= (float<= 1.0 0) false))
+    (is (= (float> 1.0 2.0) false))
+    (is (= (float> 2.0 1.0) true))
+    (is (= (float> 1.0 1.0) false))
+    (is (= (float>= 1.0 1.0) true))
+    (is (= (float>= 3.0 2.0) true))
+    (is (= (float>= 1.0 2.0) false))))
+
 (deftest vectors-test
   (let [v1 [4 15 16 18 32 0 39 32 15 19]
         v2 [7 38 29 23 11 32 25 5 34 17]]
