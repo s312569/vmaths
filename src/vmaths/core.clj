@@ -37,6 +37,28 @@
   (pearson [a b])
   (cosine [a b]))
 
+(defprotocol INormalisation
+  (min-max [v])
+  (standard-score [v])
+  (positional-standardization [v])
+  (unitization [v])
+  (positional-unitization [v])
+  (unitization-zero-min [v])
+  (norm-in-range [v])
+  (positional-norm-in-range [v])
+  (normalization [v])
+  (positional-norm [v])
+  (norm-central-zero [v])
+  (quotient-trans [v])
+  (positional-quotient-trans [v])
+  (quotient-trans-range [v])
+  (quotient-trans-max [v])
+  (quotient-trans-mean [v])
+  (positional-quotient-trans-median [v])
+  (quotient-trans-sum [v])
+  (unit [v])
+  (do-normalise [v n]))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; utilities
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -185,6 +207,13 @@
           (float>= p (/ (- c t3) (+ c t4))) (ma-last v)
           :else (quant-helper (+ (* (+ c t4) p) t3) v))))
 
+(defn- mad-denominator
+  [v]
+  (let [m (mad v)]
+    (if-not (= 0.0 m)
+      (* 1.4826 m)
+      (* 1.253314 (meanad v)))))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; vectors
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -290,4 +319,109 @@
 (extend mikera.vectorz.impl.StridedVector ISimilarity default-sim)
 (extend mikera.vectorz.impl.ArraySubVector ISimilarity default-sim)
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; normalise
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(def default-vector-norm
+  {:min-max
+   (fn [v] (let [mi (ma/emin v) ma (ma/emax v)]
+            [mi (- ma mi)]))
+   
+   :standard-score
+   (fn [v] [(mean v) (ssd v)])
+
+   :positional-standardization
+   (fn [v] [(median v) (mad-denominator v)])
+
+   :unitization
+   (fn [v] [(mean v) (vrange v)])
+
+   :positional-unitization
+   (fn [v] [(median v) (vrange v)])
+
+   :unitization-zero-min
+   (fn [v] [(ma/emin v) (vrange v)])
+
+   :norm-in-range
+   (fn [v] (let [m (mean v)] [m (-> (ma/sub v m) ma/abs ma/emax)]))
+
+   :positional-norm-in-range
+   (fn [v] (let [m (median v)] [m (-> (ma/sub v m) ma/abs ma/emax)]))
+
+   :quotient-trans
+   (fn [v] [(ssd v)])
+
+   :positional-quotient-trans
+   (fn [v] [(mad-denominator v)])
+
+   :quotient-trans-range
+   (fn [v] [(vrange v)])
+
+   :quotient-trans-max
+   (fn [v] [(ma/emax v)])
+
+   :quotient-trans-mean
+   (fn [v] [(mean v)])
+
+   :positional-quotient-trans-median
+   (fn [v] [(median v)])
+
+   :quotient-trans-sum
+   (fn [v] [(ma/esum v)])
+
+   :normalization
+   (fn [v] (let [m (mean v)] [m (-> (ma/sub v m) ma/square ma/esum Math/sqrt)]))
+
+   :positional-norm
+   (fn [v] (let [m (median v)] [m (-> (ma/sub v m) ma/square ma/esum Math/sqrt)]))
+
+   :norm-central-zero
+   (fn [v] [(midrange v) (/ (vrange v) 2)])
+
+   :unit
+   (fn [v] [(mal/norm v)])
+
+   :do-normalise
+   (fn [v [n d]]
+     (if d
+       (if-not (zero? d)
+         (ma/emap #(-> (/ (- % n) d) double) v)
+         (throw (Exception. "Zero denominator in normalisation.")))
+       (if-not (zero? n)
+         (ma/emap #(-> (/ % n) double) v)
+         (throw (Exception. "Zero denominator in normalisation.")))))})
+
+(extend clojure.lang.PersistentVector INormalisation default-vector-norm)
+(extend mikera.vectorz.Vector INormalisation default-vector-norm)
+(extend mikera.vectorz.impl.StridedVector INormalisation default-vector-norm)
+(extend mikera.vectorz.impl.ArraySubVector INormalisation default-vector-norm)
+
+(defn normalise
+  "Normalises an object using function (nf) which can be one of:
+  
+  positional-unitization - ((x-median)/range)
+  unit - (x/norm)
+  positional-norm-in-range - ((x-median)/max(abs(x-median)))
+  quotient-trans-sum - (x/sum)
+  quotient-trans - (x/sd)
+  quotient-trans-max - (x/max)
+  positional-norm - ((x-median)/sqrt(sum((x-median)^2)))
+  unitization - ((x-mean)/range)
+  positional-standardization - ((x-median)/mad)
+  norm-central-zero - ((x-midrange)/(range/2))
+  quotient-trans-mean - (x/mean)
+  quotient-trans-range - (x/range)
+  positional-quotient-trans-median - (x/median)
+  standard-score - ((x-mean)/sd)
+  normalization - ((x-midrange)/(range/2))
+  norm-in-range - ((x-mean)/max(abs(x-mean)))
+  min-max - (x-minimum)/(maximum-minimum)
+  unitization-zero-min - ((x-min)/range)
+  positional-quotient-trans - (x/mad)
+
+  Returns a vector containing normalised vector and a vector of values
+  used to normalize the object."
+  [o nf]
+  (let [cvs (nf o)]
+    [(do-normalise o cvs) cvs]))
