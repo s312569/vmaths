@@ -22,7 +22,9 @@ pearson, cosine
 
 ;; normalise vectors using `normalise` and a normalisation function:
 vmaths.core> (normalise [4 15 16 18 32 0 39 32 15 19] standard-score)
-[[-1.2175510066851167 -0.3246802684493645 -0.24351020133702336 -0.08117006711234112 1.0552108724604345 -1.5422312751344813 1.6234013422468225 1.0552108724604345 -0.3246802684493645 0.0] [19.0 12.31981240838422]]
+[[-1.2175510066851167 -0.3246802684493645 -0.24351020133702336 -0.08117006711234112
+ 1.0552108724604345 -1.5422312751344813 1.6234013422468225 1.0552108724604345
+ -0.3246802684493645 0.0] [19.0 12.31981240838422]]
 vmaths.core> (:doc (meta #'normalise))
 "Normalises an object using function (nf) which can be one of:
 
@@ -46,8 +48,9 @@ vmaths.core> (:doc (meta #'normalise))
    unitization-zero-min - ((x-min)/range)
    positional-quotient-trans - (x/mad)
 
-Returns a vector containing normalised vector and a vector of values
+Returns a vector containing normalised object and a vector of values
 used to normalize the object."
+vmaths.core>
 ```
 
 ## License
