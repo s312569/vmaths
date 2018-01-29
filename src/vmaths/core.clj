@@ -56,8 +56,11 @@
   (quotient-trans-mean [v])
   (positional-quotient-trans-median [v])
   (quotient-trans-sum [v])
-  (unit [v])
-  (do-normalise [v n]))
+  (unit [v]))
+
+(defprotocol INormalisable
+  (do-normalise [o v rc])
+  (normalisation-values [o f rc]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; utilities
@@ -380,22 +383,69 @@
    (fn [v] [(midrange v) (/ (vrange v) 2)])
 
    :unit
-   (fn [v] [(mal/norm v)])
-
-   :do-normalise
-   (fn [v [n d]]
-     (if d
-       (if-not (zero? d)
-         (ma/emap #(-> (/ (- % n) d) double) v)
-         (throw (Exception. "Zero denominator in normalisation.")))
-       (if-not (zero? n)
-         (ma/emap #(-> (/ % n) double) v)
-         (throw (Exception. "Zero denominator in normalisation.")))))})
+   (fn [v] [(mal/norm v)])})
 
 (extend clojure.lang.PersistentVector INormalisation default-vector-norm)
 (extend mikera.vectorz.Vector INormalisation default-vector-norm)
 (extend mikera.vectorz.impl.StridedVector INormalisation default-vector-norm)
 (extend mikera.vectorz.impl.ArraySubVector INormalisation default-vector-norm)
+
+(defn- vector-norm
+  [v [n d]]
+  (if d
+    (ma/emap #(-> (/ (- % n) d) double) v)
+    (ma/emap #(-> (/ % n) double) v)))
+
+(defn- norm-vals
+  [v f]
+  (let [[n d :as r] (f v)]
+    (if d
+      (if-not (zero? d) r (throw (Exception. "Zero denominator in normalisation.")))
+      (if-not (zero? n) r (throw (Exception. "Zero denominator in normalisation."))))))
+
+(def core-inormalisable
+  {:do-normalise (fn [v [n d] _] (vector-norm v [n d]))
+   :normalisation-values (fn [v f _] (norm-vals v f))})
+
+(extend mikera.vectorz.Vector INormalisable core-inormalisable)
+(extend mikera.vectorz.impl.StridedVector INormalisable core-inormalisable)
+(extend mikera.vectorz.impl.ArraySubVector INormalisable core-inormalisable)
+
+(extend-protocol INormalisable
+
+  clojure.lang.PersistentVector
+
+  (do-normalise [v cvs rc]
+    (if (= (class (first v)) clojure.lang.PersistentVector)
+      (condp = rc
+        :rows (mapv #(do-normalise %1 %2 rc) v cvs)
+        :cols (apply mapv vector (mapv #(do-normalise %1 %2 rc)
+                                       (apply mapv vector v)
+                                       cvs)))
+      (vector-norm v cvs)))
+
+  (normalisation-values [v f rc]
+    (if (= (class (first v)) clojure.lang.PersistentVector)
+      (mapv #(normalisation-values % f rc)
+            (condp = rc
+              :rows v
+              :cols (apply mapv vector v)))
+      (norm-vals v f))))
+
+(extend-protocol INormalisable
+
+  mikera.matrixx.Matrix
+
+  (do-normalise [m cvs rc]
+    (condp = rc
+      :rows (ma/array (map #(do-normalise %1 %2 rc) (ma/rows m) cvs))
+      :cols (->> (ma/array (map #(do-normalise %1 %2 rc) (ma/columns m) cvs))
+                 ma/transpose)))
+
+  (normalisation-values [m f rc]
+    (condp = rc
+      :cols (mapv #(normalisation-values % f rc) (ma/columns m))
+      :rows (mapv #(normalisation-values % f rc) (ma/rows m)))))
 
 (defn normalise
   "Normalises an object using function (nf) which can be one of:
@@ -420,8 +470,10 @@
   unitization-zero-min - ((x-min)/range)
   positional-quotient-trans - (x/mad)
 
-  Returns a vector containing normalised vector and a vector of values
-  used to normalize the object."
-  [o nf]
-  (let [cvs (nf o)]
-    [(do-normalise o cvs) cvs]))
+  Returns a vector containing normalised object and a vector of values
+  used to normalize the object. For matrices the keyword 'dir'
+  argument can be one of :rows or :cols; for vectors this argument is
+  ignored."
+  [o normfn & {:keys [dir] :or {dir :cols}}]
+  (let [cvs (normalisation-values o normfn dir)]
+    [(do-normalise o cvs dir) cvs]))
