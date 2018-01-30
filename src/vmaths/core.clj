@@ -426,10 +426,12 @@
 
   (normalisation-values [v f rc]
     (if (= (class (first v)) clojure.lang.PersistentVector)
-      (mapv #(normalisation-values % f rc)
-            (condp = rc
-              :rows v
-              :cols (apply mapv vector v)))
+      (if (= (-> (mapv count v) set count) 1)
+        (mapv #(normalisation-values % f rc)
+              (condp = rc
+                :rows v
+                :cols (apply mapv vector v)))
+        (throw (Exception. "Unequal vector lengths")))
       (norm-vals v f))))
 
 (extend-protocol INormalisable
@@ -477,3 +479,61 @@
   [o normfn & {:keys [dir] :or {dir :cols}}]
   (let [cvs (normalisation-values o normfn dir)]
     [(do-normalise o cvs dir) cvs]))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; lazy seqs
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn stream [f coll]
+  (->> {:remaining coll}
+       (iterate f)
+       (take-while #(not (contains? % :end)))
+       (map :yield)
+       (filter #(not (nil? %)))))
+
+(defn stream-var
+  [{[n & remaining] :remaining
+    :keys [m s k]
+    :or {m n s 0 k 0}}]
+  (let [nk (inc k)
+        nm (+ m (/ (- n m) nk))
+        ns (+ s (* (- n m) (- n nm)))
+        r {:m nm
+           :k nk
+           :s ns
+           :yield {:m nm :s ns :k nk}
+           :remaining remaining}]
+    (if-not (seq remaining)
+      (assoc r :end true)
+      r)))
+
+(extend-protocol IStats
+
+  clojure.lang.LazySeq
+
+  (mean [l]
+    (let [meanfn (fn [{[n & remaining] :remaining
+                      :keys [i yield]
+                      :or {i 0 yield 0}}]
+                   (let [nm (/ (+ (* yield i) n) (+ i 1))
+                         r {:remaining remaining
+                            :i (+ i 1)
+                            :yield nm}]
+                     (if-not (seq remaining)
+                       (assoc r :end true)
+                       r)))]
+      (map double (stream meanfn l))))
+
+  (variance [l]
+    (map (fn [{s :s m :m k :k}] (double (/ s (- k 1.0)))) (stream stream-var l)))
+
+  (pop-variance [l]
+    (map (fn [{s :s m :m k :k}] (double (/ s k))) (stream stream-var l)))
+
+  (ssd [l]
+    (map (fn [{s :s m :m k :k}] (double (-> (/ s (- k 1.0)) Math/sqrt)))
+         (stream stream-var l)))
+
+  (psd [l]
+    (map (fn [{s :s m :m k :k}] (double (-> (/ s k) Math/sqrt)))
+         (stream stream-var l))))
