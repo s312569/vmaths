@@ -484,14 +484,14 @@
 ;; lazy seqs
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn stream [f coll]
-  (->> {:remaining coll}
+(defn- stream [f coll]
+  (->> (if {:remaining coll} coll {:remaining coll})
        (iterate f)
        (take-while #(not (contains? % :end)))
        (map :yield)
        (filter #(not (nil? %)))))
 
-(defn stream-var
+(defn- stream-var
   [{[n & remaining] :remaining
     :keys [m s k]
     :or {m n s 0 k 0}}]
@@ -536,4 +536,35 @@
 
   (psd [l]
     (map (fn [{s :s m :m k :k}] (double (-> (/ s k) Math/sqrt)))
-         (stream stream-var l))))
+         (stream stream-var l)))
+
+  ;; (quantile [l p]
+  ;;   (let [i (zipmap (range 1 6)
+  ;;                   (mapv vector
+  ;;                         (->> (take 5 l) vec)
+  ;;                         [1.0 (+ 1 (* 2 p)) (+ 1 (* 4 p)) (+ 3 (* 2 p)) 5.0]
+  ;;                         [0.0 (/ p 2) p (/ (+ 1 p) 2) 1.0]))
+  ;;         f (fn [{[n & remaining] :remaining
+  ;;                :keys [s]}]
+  ;;             (if n
+  ;;               (let [[kn ns] (let [[fx f2 f3] (->> (vals s) first)
+  ;;                                   [lx l2 l3] (->> (vals s) last)]
+  ;;                               (cond (< n fx)
+  ;;                                     [1 (assoc s 1 [n f2 f3])]
+  ;;                                     (> n lx)
+  ;;                                     [4 (assoc s 5 [n l2 l3])]
+  ;;                                     :else
+  ;;                                     [(->> (filter (fn [[[k [i x y]]
+  ;;                                                        [k2 [i2 x2 y2]]]]
+  ;;                                                     (and (>= n i) (< n i2)))
+  ;;                                                   (partition-all 2 1 s))
+  ;;                                           first first first)
+  ;;                                      s]))
+  ;;                     ns (->> (map (fn [[k v]] (if (> k kn) [(+ 1 k) v] [k v])) ns)
+  ;;                             (map (fn [[k [i x y]]] [k [i (+ x y) y]]))
+                              
+  ;;                             (into {}))]
+  ;;                 {:remaining remaining :s ns :yield [kn ns]})
+  ;;               {:end true}))]
+  ;;     (stream f {:remaining (drop 5 l) :s i})))
+  )
