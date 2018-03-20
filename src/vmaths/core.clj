@@ -234,8 +234,10 @@
                      (double (/ s k))))
 
    :ssd (fn [v]
-          (let [{s :s m :m k :k} (vector-var v)]
-            (-> (/ s (- k 1)) ma/sqrt)))
+          (if (> (count v) 1)
+            (let [{s :s m :m k :k} (vector-var v)]
+              (-> (/ s (- k 1)) ma/sqrt))
+            (println (str "WARNING: No ssd for vector of size " (count v)))))
 
    :psd (fn [v]
           (let [{s :s m :m k :k} (vector-var v)]
@@ -485,7 +487,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn- stream [f coll]
-  (->> (if {:remaining coll} coll {:remaining coll})
+  (->> (if (:remaining coll) coll {:remaining coll})
        (iterate f)
        (take-while #(not (contains? % :end)))
        (map :yield)
@@ -495,17 +497,12 @@
   [{[n & remaining] :remaining
     :keys [m s k]
     :or {m n s 0 k 0}}]
-  (let [nk (inc k)
-        nm (+ m (/ (- n m) nk))
-        ns (+ s (* (- n m) (- n nm)))
-        r {:m nm
-           :k nk
-           :s ns
-           :yield {:m nm :s ns :k nk}
-           :remaining remaining}]
-    (if-not (seq remaining)
-      (assoc r :end true)
-      r)))
+  (if-not n
+    {:end true}
+    (let [nk (inc k)
+          nm (+ m (/ (- n m) nk))
+          ns (+ s (* (- n m) (- n nm)))]
+      {:m nm :k nk :s ns :yield {:m nm :s ns :k nk} :remaining remaining})))
 
 (extend-protocol IStats
 
@@ -515,13 +512,10 @@
     (let [meanfn (fn [{[n & remaining] :remaining
                       :keys [i yield]
                       :or {i 0 yield 0}}]
-                   (let [nm (/ (+ (* yield i) n) (+ i 1))
-                         r {:remaining remaining
-                            :i (+ i 1)
-                            :yield nm}]
-                     (if-not (seq remaining)
-                       (assoc r :end true)
-                       r)))]
+                   (if-not n
+                     {:end true}
+                     (let [nm (/ (+ (* yield i) n) (+ i 1))]
+                       {:remaining remaining :i (+ i 1) :yield nm})))]
       (map double (stream meanfn l))))
 
   (variance [l]
@@ -532,39 +526,41 @@
 
   (ssd [l]
     (map (fn [{s :s m :m k :k}] (double (-> (/ s (- k 1.0)) Math/sqrt)))
-         (stream stream-var l)))
+         (rest (stream stream-var l))))
 
   (psd [l]
     (map (fn [{s :s m :m k :k}] (double (-> (/ s k) Math/sqrt)))
-         (stream stream-var l)))
+         (rest (stream stream-var l))))
 
-  ;; (quantile [l p]
-  ;;   (let [i (zipmap (range 1 6)
-  ;;                   (mapv vector
-  ;;                         (->> (take 5 l) vec)
-  ;;                         [1.0 (+ 1 (* 2 p)) (+ 1 (* 4 p)) (+ 3 (* 2 p)) 5.0]
-  ;;                         [0.0 (/ p 2) p (/ (+ 1 p) 2) 1.0]))
-  ;;         f (fn [{[n & remaining] :remaining
-  ;;                :keys [s]}]
-  ;;             (if n
-  ;;               (let [[kn ns] (let [[fx f2 f3] (->> (vals s) first)
-  ;;                                   [lx l2 l3] (->> (vals s) last)]
-  ;;                               (cond (< n fx)
-  ;;                                     [1 (assoc s 1 [n f2 f3])]
-  ;;                                     (> n lx)
-  ;;                                     [4 (assoc s 5 [n l2 l3])]
-  ;;                                     :else
-  ;;                                     [(->> (filter (fn [[[k [i x y]]
-  ;;                                                        [k2 [i2 x2 y2]]]]
-  ;;                                                     (and (>= n i) (< n i2)))
-  ;;                                                   (partition-all 2 1 s))
-  ;;                                           first first first)
-  ;;                                      s]))
-  ;;                     ns (->> (map (fn [[k v]] (if (> k kn) [(+ 1 k) v] [k v])) ns)
-  ;;                             (map (fn [[k [i x y]]] [k [i (+ x y) y]]))
+  (quantile [l p]
+    (let [i (zipmap (range 1 6)
+                    (mapv vector
+                          (->> (take 5 l) sort vec)
+                          [1.0 (+ 1 (* 2 p)) (+ 1 (* 4 p)) (+ 3 (* 2 p)) 5.0]
+                          [0.0 (/ p 2) p (/ (+ 1 p) 2) 1.0]))
+          f (fn [{[n & remaining] :remaining
+                 :keys [s]}]
+              (if n
+                (let [[kn ns] (let [[fx f2 f3] (->> (vals s) first)
+                                    [lx l2 l3] (->> (vals s) last)]
+                                (cond (< n fx)
+                                      [1 (assoc s 1 [n f2 f3])]
+                                      (> n lx)
+                                      [4 (assoc s 5 [n l2 l3])]
+                                      :else
+                                      [(->> (filter (fn [[[k [i x y]]
+                                                         [k2 [i2 x2 y2]]]]
+                                                      (and (>= n i) (< n i2)))
+                                                    (partition-all 2 1 s))
+                                            first first first)
+                                       s]))
+                      ns (->> (map (fn [[k v]] (if (> k kn) [(+ 1 k) v] [k v])) ns)
+                              (map (fn [[k [i x y]]] [k [i (+ x y) y]]))
                               
-  ;;                             (into {}))]
-  ;;                 {:remaining remaining :s ns :yield [kn ns]})
-  ;;               {:end true}))]
-  ;;     (stream f {:remaining (drop 5 l) :s i})))
-  )
+                              (into {}))]
+                  {:remaining remaining :s ns :yield [kn ns]})
+                {:end true}))]
+      (stream f {:remaining (drop 5 l) :s i}))))
+
+(def qtest (lazy-seq [0.02 0.5 0.74 3.39 0.83 22.37 10.15 15.43 38.62 15.92
+                      34.60 10.28 1.47 0.40 0.05 11.39 0.27 0.42 0.09 11.37]))
