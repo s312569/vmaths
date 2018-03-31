@@ -5,7 +5,7 @@ Some common maths functions for vectors. Works on normal vectors and various cor
 
 ## Usage
 
-Add `[vmaths "0.1.2"]` to your project.clj file.
+Add `[vmaths "0.1.3"]` to your project.clj file.
 
 Functions include:
 
