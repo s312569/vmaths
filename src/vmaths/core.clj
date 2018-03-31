@@ -6,6 +6,9 @@
 
 (ma/set-current-implementation :vectorz)
 
+(def qtest (lazy-seq [0.02 0.15 0.74 3.39 0.83 22.37 10.15 15.43 38.62 15.92
+                      34.60 10.28 1.47 0.40 0.05 11.39 0.27 0.42 0.09 11.37]))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; protocols
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -538,29 +541,61 @@
                           (->> (take 5 l) sort vec)
                           [1.0 (+ 1 (* 2 p)) (+ 1 (* 4 p)) (+ 3 (* 2 p)) 5.0]
                           [0.0 (/ p 2) p (/ (+ 1 p) 2) 1.0]))
+          cq (fn [pm]
+               (let [pm (into (sorted-map) pm)
+                     pp (fn [d n q pn pq nn nq]
+                          (let [qq (+ q (* (/ d (- nn pn))
+                                           (+ (* (+ (- n pn) d) (/ (- nq q) (- nn n)))
+                                              (* (- nn n d) (/ (- q pq) (- n pn))))))]
+                            (if (< pq qq nq)
+                              qq
+                              (+ q (* d (/ (- (if (= d -1) pq nq) q)
+                                           (- (if (= d -1) pn nn) n)))))))]
+                 (loop [pm pm
+                        i 0]
+                   (cond (= i 0) (recur pm (inc i))
+                         (= i 4) pm
+                         :else (let [[n [q nd ni] :as in] (nth (seq pm) i)
+                                     [pn [pq _ _]] (nth (seq pm) (- i 1))
+                                     [nn [nq _ _]] (nth (seq pm) (+ i 1))
+                                     di (- nd n)
+                                     d (if (< di 0) -1 1)]
+                                 (if (or (and (>= di 1) (> (- nn n) 1))
+                                         (and (<= di -1) (< (- pn n) -1)))
+                                   (recur (-> (dissoc pm n)
+                                              (assoc (+ n d)
+                                                     [(pp d n q pn pq nn nq) nd ni]))
+                                          (inc i))
+                                   (recur pm (inc i))))))))
           f (fn [{[n & remaining] :remaining
                  :keys [s]}]
               (if n
-                (let [[kn ns] (let [[fx f2 f3] (->> (vals s) first)
-                                    [lx l2 l3] (->> (vals s) last)]
+                (let [[kn ns] (let [[pf [fx f2 f3]] [(-> (first s) first)
+                                                     (-> (vals s) first)]
+                                    [lf [lx l2 l3]] [(-> (last s) first)
+                                                     (-> (vals s) last)]]
                                 (cond (< n fx)
-                                      [1 (assoc s 1 [n f2 f3])]
+                                      [1 (assoc s pf [n f2 f3])]
                                       (> n lx)
-                                      [4 (assoc s 5 [n l2 l3])]
+                                      [4 (assoc s lf [n l2 l3])]
                                       :else
-                                      [(->> (filter (fn [[[k [i x y]]
-                                                         [k2 [i2 x2 y2]]]]
-                                                      (and (>= n i) (< n i2)))
-                                                    (partition-all 2 1 s))
-                                            first first first)
+                                      [(loop [pm (->> (sort s) (partition 2 1))
+                                              i 1]
+                                         (let [[_ [q1 _ _]] (-> pm first first)
+                                               [_ [q2 _ _]] (-> pm first second)]
+                                           (if (< q1 n q2)
+                                             i
+                                             (recur (rest pm) (inc i)))))
                                        s]))
-                      ns (->> (map (fn [[k v]] (if (> k kn) [(+ 1 k) v] [k v])) ns)
+                      ns (->> (map-indexed (fn [i [k v]] (if (> (+ i 1) kn)
+                                                          [(+ 1 k) v]
+                                                          [k v]))
+                                           ns)
                               (map (fn [[k [i x y]]] [k [i (+ x y) y]]))
-                              
-                              (into {}))]
-                  {:remaining remaining :s ns :yield [kn ns]})
+                              (into {})
+                              cq)]
+                  {:remaining remaining :s ns :yield (-> (nth (seq ns) 2) second first)})
                 {:end true}))]
-      (stream f {:remaining (drop 5 l) :s i}))))
-
-(def qtest (lazy-seq [0.02 0.5 0.74 3.39 0.83 22.37 10.15 15.43 38.62 15.92
-                      34.60 10.28 1.47 0.40 0.05 11.39 0.27 0.42 0.09 11.37]))
+      (if (< (-> (take 6 l) count) 6)
+        (lazy-seq [(quantile (vec l) p)])
+        (stream f {:remaining (drop 5 l) :s i})))))
