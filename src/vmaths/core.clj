@@ -220,6 +220,12 @@
       (* 1.4826 m)
       (* 1.253314 (meanad v)))))
 
+(defmacro with-length-check
+  [c & body]
+  `(if (> (count ~c) 1)
+     ~@body
+     (println "Warning vector size less than 2")))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; vectors
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -229,45 +235,56 @@
            (double (/ (ma/ereduce + v) (ma-count v))))
 
    :variance (fn [v]
-               (let [{s :s m :m k :k} (vector-var v)]
-                 (double (/ s (- k 1.0)))))
+               (with-length-check v
+                 (let [{s :s m :m k :k} (vector-var v)]
+                   (double (/ s (- k 1.0))))))
 
    :pop-variance (fn [v]
-                   (let [{s :s m :m k :k} (vector-var v)]
-                     (double (/ s k))))
+                   (with-length-check v
+                     (let [{s :s m :m k :k} (vector-var v)]
+                       (double (/ s k)))))
 
    :ssd (fn [v]
-          (if (> (count v) 1)
+          (with-length-check v
             (let [{s :s m :m k :k} (vector-var v)]
-              (-> (/ s (- k 1)) ma/sqrt))
-            (println (str "WARNING: No ssd for vector of size " (count v)))))
+              (-> (/ s (- k 1)) ma/sqrt))))
 
    :psd (fn [v]
-          (let [{s :s m :m k :k} (vector-var v)]
-            (-> (/ s k) ma/sqrt)))
+          (with-length-check v
+            (let [{s :s m :m k :k} (vector-var v)]
+              (-> (/ s k) ma/sqrt))))
 
    :mad (fn [v]
-          (let [m (median v)] (-> (ma/emap #(ma/abs (- % m)) v) median)))
+          (with-length-check v
+            (let [m (median v)] (-> (ma/emap #(ma/abs (- % m)) v) median))))
 
    :meanad (fn [v]
-             (let [m (median v)] (/ (->> (ma/emap #(ma/abs (- % m)) v)
-                                         (ma/ereduce +))
-                                    (ma-count v))))
+             (with-length-check v
+               (let [m (median v)] (/ (->> (ma/emap #(ma/abs (- % m)) v)
+                                           (ma/ereduce +))
+                                      (ma-count v)))))
 
-   :quantile (fn ([v p] (double (calc-quantile p (-> (sort < v) vec) 7)))
-               ([v p m] (double (calc-quantile p (-> (sort < v) vec) m))))
+   :quantile (fn ([v p]
+                 (with-length-check v
+                   (double (calc-quantile p (-> (sort < v) vec) 7))))
+               ([v p m] (with-length-check v
+                          (double (calc-quantile p (-> (sort < v) vec) m)))))
    
    :median (fn [v]
-             (double (calc-quantile 0.5 (-> (sort < v) vec) 2)))
+             (with-length-check v
+               (double (calc-quantile 0.5 (-> (sort < v) vec) 2))))
 
    :mode (fn [v]
-           (->> (frequencies v) (group-by val) (sort-by key) last val (mapv key)))
+           (with-length-check v
+             (->> (frequencies v) (group-by val) (sort-by key) last val (mapv key))))
 
    :vrange (fn [v]
-             (- (ma/emax v) (ma/emin v)))
+             (with-length-check v
+               (- (ma/emax v) (ma/emin v))))
 
    :midrange (fn [v]
-               (/ (+ (ma/emax v) (ma/emin v)) 2.0))})
+               (with-length-check v
+                 (/ (+ (ma/emax v) (ma/emin v)) 2.0)))})
 
 (extend clojure.lang.PersistentVector IStats default-stats)
 (extend mikera.vectorz.Vector IStats default-stats)
@@ -522,80 +539,106 @@
       (map double (stream meanfn l))))
 
   (variance [l]
-    (map (fn [{s :s m :m k :k}] (double (/ s (- k 1.0)))) (stream stream-var l)))
+    (with-length-check l
+      (map (fn [{s :s m :m k :k}] (double (/ s (- k 1.0)))) (stream stream-var l))))
 
   (pop-variance [l]
-    (map (fn [{s :s m :m k :k}] (double (/ s k))) (stream stream-var l)))
+    (with-length-check l
+      (map (fn [{s :s m :m k :k}] (double (/ s k))) (stream stream-var l))))
 
   (ssd [l]
-    (map (fn [{s :s m :m k :k}] (double (-> (/ s (- k 1.0)) Math/sqrt)))
-         (rest (stream stream-var l))))
+    (with-length-check l
+      (map (fn [{s :s m :m k :k}] (double (-> (/ s (- k 1.0)) Math/sqrt)))
+           (rest (stream stream-var l)))))
 
   (psd [l]
-    (map (fn [{s :s m :m k :k}] (double (-> (/ s k) Math/sqrt)))
-         (rest (stream stream-var l))))
+    (with-length-check l
+      (map (fn [{s :s m :m k :k}] (double (-> (/ s k) Math/sqrt)))
+           (rest (stream stream-var l)))))
 
   (quantile [l p]
-    (let [i (zipmap (range 1 6)
-                    (mapv vector
-                          (->> (take 5 l) sort vec)
-                          [1.0 (+ 1 (* 2 p)) (+ 1 (* 4 p)) (+ 3 (* 2 p)) 5.0]
-                          [0.0 (/ p 2) p (/ (+ 1 p) 2) 1.0]))
-          cq (fn [pm]
-               (let [pm (into (sorted-map) pm)
-                     pp (fn [d n q pn pq nn nq]
-                          (let [qq (+ q (* (/ d (- nn pn))
-                                           (+ (* (+ (- n pn) d) (/ (- nq q) (- nn n)))
-                                              (* (- nn n d) (/ (- q pq) (- n pn))))))]
-                            (if (< pq qq nq)
-                              qq
-                              (+ q (* d (/ (- (if (= d -1) pq nq) q)
-                                           (- (if (= d -1) pn nn) n)))))))]
-                 (loop [pm pm
-                        i 0]
-                   (cond (= i 0) (recur pm (inc i))
-                         (= i 4) pm
-                         :else (let [[n [q nd ni] :as in] (nth (seq pm) i)
-                                     [pn [pq _ _]] (nth (seq pm) (- i 1))
-                                     [nn [nq _ _]] (nth (seq pm) (+ i 1))
-                                     di (- nd n)
-                                     d (if (< di 0) -1 1)]
-                                 (if (or (and (>= di 1) (> (- nn n) 1))
-                                         (and (<= di -1) (< (- pn n) -1)))
-                                   (recur (-> (dissoc pm n)
-                                              (assoc (+ n d)
-                                                     [(pp d n q pn pq nn nq) nd ni]))
-                                          (inc i))
-                                   (recur pm (inc i))))))))
-          f (fn [{[n & remaining] :remaining
-                 :keys [s]}]
-              (if n
-                (let [[kn ns] (let [[pf [fx f2 f3]] [(-> (first s) first)
-                                                     (-> (vals s) first)]
-                                    [lf [lx l2 l3]] [(-> (last s) first)
-                                                     (-> (vals s) last)]]
-                                (cond (< n fx)
-                                      [1 (assoc s pf [n f2 f3])]
-                                      (> n lx)
-                                      [4 (assoc s lf [n l2 l3])]
-                                      :else
-                                      [(loop [pm (->> (sort s) (partition 2 1))
-                                              i 1]
-                                         (let [[_ [q1 _ _]] (-> pm first first)
-                                               [_ [q2 _ _]] (-> pm first second)]
-                                           (if (< q1 n q2)
-                                             i
-                                             (recur (rest pm) (inc i)))))
-                                       s]))
-                      ns (->> (map-indexed (fn [i [k v]] (if (> (+ i 1) kn)
-                                                          [(+ 1 k) v]
-                                                          [k v]))
-                                           ns)
-                              (map (fn [[k [i x y]]] [k [i (+ x y) y]]))
-                              (into {})
-                              cq)]
-                  {:remaining remaining :s ns :yield (-> (nth (seq ns) 2) second first)})
-                {:end true}))]
-      (if (< (-> (take 6 l) count) 6)
-        (lazy-seq [(quantile (vec l) p)])
-        (stream f {:remaining (drop 5 l) :s i})))))
+    (with-length-check l
+      (let [i (zipmap (range 1 6)
+                      (mapv vector
+                            (->> (take 5 l) sort vec)
+                            [1.0 (+ 1 (* 2 p)) (+ 1 (* 4 p)) (+ 3 (* 2 p)) 5.0]
+                            [0.0 (/ p 2) p (/ (+ 1 p) 2) 1.0]))
+            cq (fn [pm]
+                 (let [pm (into (sorted-map) pm)
+                       pp (fn [d n q pn pq nn nq]
+                            (let [qq (+ q (* (/ d (- nn pn))
+                                             (+ (* (+ (- n pn) d) (/ (- nq q) (- nn n)))
+                                                (* (- nn n d) (/ (- q pq) (- n pn))))))]
+                              (if (< pq qq nq)
+                                qq
+                                (+ q (* d (/ (- (if (= d -1) pq nq) q)
+                                             (- (if (= d -1) pn nn) n)))))))]
+                   (loop [pm pm
+                          i 0]
+                     (cond (= i 0) (recur pm (inc i))
+                           (= i 4) pm
+                           :else (let [[n [q nd ni] :as in] (nth (seq pm) i)
+                                       [pn [pq _ _]] (nth (seq pm) (- i 1))
+                                       [nn [nq _ _]] (nth (seq pm) (+ i 1))
+                                       di (- nd n)
+                                       d (if (< di 0) -1 1)]
+                                   (if (or (and (>= di 1) (> (- nn n) 1))
+                                           (and (<= di -1) (< (- pn n) -1)))
+                                     (recur (-> (dissoc pm n)
+                                                (assoc (+ n d)
+                                                       [(pp d n q pn pq nn nq) nd ni]))
+                                            (inc i))
+                                     (recur pm (inc i))))))))
+            f (fn [{[n & remaining] :remaining
+                   :keys [s]}]
+                (if n
+                  (let [[kn ns] (let [[pf [fx f2 f3]] [(-> (first s) first)
+                                                       (-> (vals s) first)]
+                                      [lf [lx l2 l3]] [(-> (last s) first)
+                                                       (-> (vals s) last)]]
+                                  (cond (< n fx)
+                                        [1 (assoc s pf [n f2 f3])]
+                                        (> n lx)
+                                        [4 (assoc s lf [n l2 l3])]
+                                        :else
+                                        [(loop [pm (->> (sort s) (partition 2 1))
+                                                i 1]
+                                           (let [[_ [q1 _ _]] (-> pm first first)
+                                                 [_ [q2 _ _]] (-> pm first second)]
+                                             (if (< q1 n q2)
+                                               i
+                                               (recur (rest pm) (inc i)))))
+                                         s]))
+                        ns (->> (map-indexed (fn [i [k v]] (if (> (+ i 1) kn)
+                                                            [(+ 1 k) v]
+                                                            [k v]))
+                                             ns)
+                                (map (fn [[k [i x y]]] [k [i (+ x y) y]]))
+                                (into {})
+                                cq)]
+                    {:remaining remaining :s ns :yield (-> (nth (seq ns) 2)
+                                                           second
+                                                           first)})
+                  {:end true}))]
+        (concat (map (fn [i] (quantile (vec (take i l)) p)) (range 2 6))
+                (stream f {:remaining (drop 5 l) :s i})))))
+
+  (median [l]
+    (with-length-check l (quantile l 0.5)))
+
+  (vrange [l]
+    (let [i (merge (zipmap [:vmin :vmax] (sort (take 2 l)))
+                   {:remaining (drop 2 l)})
+          rfunc (fn [{[n & remaining] :remaining
+                     :keys [vmin vmax]
+                     :or {vmin 0 vmax 0}}]
+                  (if-not n
+                    {:end true}
+                    (let [nmin (if (< n vmin) n vmin)
+                          nmax (if (> n vmax) n vmax)
+                          nr (- nmax nmin)]
+                      {:remaining remaining :vmin nmin :vmax nmax :yield nr})))]
+      (map double (stream rfunc i))))
+
+  (midrange [l]
+    (map #(/ % 2.0) (vrange l))))
