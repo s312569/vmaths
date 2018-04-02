@@ -5,7 +5,7 @@ Some common maths functions for vectors. Works on normal vectors and various cor
 
 ## Usage
 
-Add `[vmaths "0.1.3"]` to your project.clj file.
+Add `[vmaths "0.1.4"]` to your project.clj file.
 
 Functions include:
 
@@ -52,6 +52,15 @@ Returns a vector containing normalised object and a vector of values
 used to normalize the object."
 vmaths.core>
 ```
+
+;; Online functions
+
+The following functions have online versions that work on lazy
+sequnces. They return a lazy sequence of their respective values after
+the corresponding value in the input list:
+
+mean, variance, pop-variance, ssd, psd, mad, meanad, quantile, median,
+vrange, midrange
 
 ## License
 
